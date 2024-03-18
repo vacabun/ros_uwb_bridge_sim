@@ -10,6 +10,7 @@
 #include <gz/transport/Node.hh>
 #include "uwb_interfaces/srv/uwb_measure.hpp"
 #include "uwb_interfaces/srv/get_position.hpp"
+#include "uwb_interfaces/msg/uwb_distance.hpp"
 #include "tinyxml2.hpp"
 #include "bridge.hpp"
 
@@ -26,6 +27,7 @@ UWBRosBridge::UWBRosBridge() : Node("uwb_ros_bridge")
 {
     config();
     load_config();
+
 }
 void UWBRosBridge::config()
 {
@@ -95,10 +97,11 @@ void UWBRosBridge::load_config()
 
 void UWBRosBridge::measure_handle_service(const std::shared_ptr<uwb_interfaces::srv::UWBMeasure::Request> request,
                                           std::shared_ptr<uwb_interfaces::srv::UWBMeasure::Response> response)
-{
+{   
+    int srcAddr = request->src_address;
     int destAddr = request->dest_address;
     auto it = anchorPoseMap.find(destAddr);
-
+    // RCLCPP_INFO(this->get_logger(), "destAddr: %d", destAddr);
     double distance = 0;
     if (it != anchorPoseMap.end())
     {
@@ -109,14 +112,21 @@ void UWBRosBridge::measure_handle_service(const std::shared_ptr<uwb_interfaces::
         distance = sqrt(pow(label_pose.x - anchor_x, 2) + pow(label_pose.y - anchor_y, 2) + pow(label_pose.z - anchor_z, 2));
         std::normal_distribution<double> distribution_normal(0., 0.1);
         distance = distance + distribution_normal(tandomGenerator);
+        // RCLCPP_INFO(this->get_logger(), "destAddr: %d, distance: %lf", destAddr, distance);
     }
     else
     {
         geometry_msgs::msg::Point p = callServiceGetPosition(destAddr);
 
         distance = sqrt(pow(label_pose.x - p.x, 2) + pow(label_pose.y - p.y, 2) + pow(label_pose.z - p.z, 2));
+        // RCLCPP_INFO(this->get_logger(), "destAddr: %d, distance: %f", destAddr, distance);
     }
-    response->distance = distance;
+    uwb_interfaces::msg::UWBDistance uwb_distance;
+    uwb_distance.src = srcAddr;
+    uwb_distance.dest = destAddr;
+    uwb_distance.distance = distance;
+    response->uwb_distance = uwb_distance;
+
 }
 
 void UWBRosBridge::get_position_handle_service(const std::shared_ptr<uwb_interfaces::srv::GetPosition::Request> request,
