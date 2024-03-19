@@ -1,19 +1,5 @@
-#include "rclcpp/rclcpp.hpp"
-#include <string>
-#include <cmath>
-#include <random>
-
-#include <ament_index_cpp/get_package_share_directory.hpp>
-
-#include "nav_msgs/msg/odometry.hpp"
-#include <gz/msgs/odometry.pb.h>
-#include <gz/transport/Node.hh>
-#include "uwb_interfaces/srv/uwb_measure.hpp"
-#include "uwb_interfaces/srv/get_position.hpp"
-#include "uwb_interfaces/msg/uwb_distance.hpp"
-#include "tinyxml2.hpp"
 #include "bridge.hpp"
-
+using namespace std::chrono_literals;
 int main(int argc, const char *argv[])
 {
     rclcpp::init(argc, argv);
@@ -27,17 +13,14 @@ UWBRosBridge::UWBRosBridge() : Node("uwb_ros_bridge")
 {
     config();
     load_config();
-
 }
 void UWBRosBridge::config()
 {
     this->declare_parameter("label_name", "x500_0");
-
-    labelName =
-        this->get_parameter("label_name").get_parameter_value().get<std::string>();
+    labelName = this->get_parameter("label_name").get_parameter_value().get<std::string>();
     RCLCPP_INFO(this->get_logger(), "label_name: %s", labelName.c_str());
-    std::string subscribeTopic = "/model/" + labelName + "/odometry";
 
+    std::string subscribeTopic = "/model/" + labelName + "/odometry";
     RCLCPP_INFO(this->get_logger(), "subscribe topic : %s", subscribeTopic.c_str());
     if (!subscribeNode.Subscribe(subscribeTopic, &UWBRosBridge::gz_odometry_topic_callback, this))
     {
@@ -45,7 +28,9 @@ void UWBRosBridge::config()
     }
 
     measure_service_ = this->create_service<uwb_interfaces::srv::UWBMeasure>("/" + labelName + "/uwb_bridge", std::bind(&UWBRosBridge::measure_handle_service, this, std::placeholders::_1, std::placeholders::_2));
-    get_position_service_ = this->create_service<uwb_interfaces::srv::GetPosition>("/" + labelName + "/gz_position", std::bind(&UWBRosBridge::get_position_handle_service, this, std::placeholders::_1, std::placeholders::_2));
+
+    gazeboPositionPublisher_ = this->create_publisher<uwb_interfaces::msg::GazeboPosition>("/gazebo_position", 10);
+    gazeboPositionSubscription_ = this->create_subscription<uwb_interfaces::msg::GazeboPosition>("/gazebo_position", 10, std::bind(&UWBRosBridge::gazebo_position_callback, this, std::placeholders::_1));
 }
 
 void UWBRosBridge::gz_odometry_topic_callback(const gz::msgs::Odometry &_msg)
@@ -54,8 +39,23 @@ void UWBRosBridge::gz_odometry_topic_callback(const gz::msgs::Odometry &_msg)
     label_pose.y = _msg.pose().position().y();
     label_pose.z = _msg.pose().position().z();
     // RCLCPP_INFO(this->get_logger(), "position: %f %f %f", x, y, z);
-}
 
+    uwb_interfaces::msg::GazeboPosition msg;
+    msg.address = get_id(labelName);
+    msg.position = label_pose;
+    gazeboPositionPublisher_->publish(msg);
+}
+int UWBRosBridge::get_id(std::string label_name)
+{
+    std::regex expression("x500_([0-9]+)");
+    std::smatch match;
+
+    if (std::regex_search(label_name, match, expression) && match.size() > 1)
+    {
+        return std::stoi(match.str(1));
+    }
+    return -1;
+}
 void UWBRosBridge::load_config()
 {
     std::string packageShareDirectory = ament_index_cpp::get_package_share_directory("uwb_ros_bridge_sim");
@@ -97,11 +97,21 @@ void UWBRosBridge::load_config()
 
 void UWBRosBridge::measure_handle_service(const std::shared_ptr<uwb_interfaces::srv::UWBMeasure::Request> request,
                                           std::shared_ptr<uwb_interfaces::srv::UWBMeasure::Response> response)
-{   
+{
     int srcAddr = request->src_address;
     int destAddr = request->dest_address;
+
+    if (srcAddr == destAddr)
+    {
+        uwb_interfaces::msg::UWBDistance uwb_distance;
+        uwb_distance.src = srcAddr;
+        uwb_distance.dest = destAddr;
+        uwb_distance.distance = 0;
+        response->uwb_distance = uwb_distance;
+        return;
+    }
     auto it = anchorPoseMap.find(destAddr);
-    // RCLCPP_INFO(this->get_logger(), "destAddr: %d", destAddr);
+
     double distance = 0;
     if (it != anchorPoseMap.end())
     {
@@ -116,64 +126,23 @@ void UWBRosBridge::measure_handle_service(const std::shared_ptr<uwb_interfaces::
     }
     else
     {
-        geometry_msgs::msg::Point p = callServiceGetPosition(destAddr);
+        geometry_msgs::msg::Point p = label_pose_map[destAddr];
 
         distance = sqrt(pow(label_pose.x - p.x, 2) + pow(label_pose.y - p.y, 2) + pow(label_pose.z - p.z, 2));
+        // RCLCPP_INFO(this->get_logger(), "label_pose: x: %lf, y: %lf, z: %lf", label_pose.x, label_pose.y, label_pose.z);
+        // RCLCPP_INFO(this->get_logger(), "pose: x: %lf, y: %lf, z: %lf", p.x, p.y, p.z);
         // RCLCPP_INFO(this->get_logger(), "destAddr: %d, distance: %f", destAddr, distance);
     }
+    // RCLCPP_INFO(this->get_logger(), "src: %d, dest: %d, distance: %f", srcAddr, destAddr, distance);
     uwb_interfaces::msg::UWBDistance uwb_distance;
     uwb_distance.src = srcAddr;
     uwb_distance.dest = destAddr;
     uwb_distance.distance = distance;
     response->uwb_distance = uwb_distance;
-
 }
 
-void UWBRosBridge::get_position_handle_service(const std::shared_ptr<uwb_interfaces::srv::GetPosition::Request> request,
-                                               std::shared_ptr<uwb_interfaces::srv::GetPosition::Response> response)
+void UWBRosBridge::gazebo_position_callback(uwb_interfaces::msg::GazeboPosition::SharedPtr msg)
 {
-    response->position = label_pose;
-}
-void UWBRosBridge::change_get_position_client_service_name(const std::string &service_name)
-{
-    // 销毁当前的服务客户端
-    get_position_client_.reset();
-    // 根据新的服务名称创建一个新的服务客户端
-    get_position_client_ = this->create_client<uwb_interfaces::srv::GetPosition>(service_name);
-}
-
-geometry_msgs::msg::Point UWBRosBridge::callServiceGetPosition(int id)
-{
-
-    auto request = std::make_shared<uwb_interfaces::srv::GetPosition::Request>();
-    geometry_msgs::msg::Point res;
-    this->service_call_completed = false;
-    change_get_position_client_service_name("/x500_" + std::to_string(id) + "/gz_position");
-    auto future = get_position_client_->async_send_request(request, std::bind(&UWBRosBridge::get_position_handle_response, this, std::placeholders::_1));
-
-    int timeout = 0;
-    while (!this->service_call_completed)
-    {
-        if (timeout++ >= 30)
-        {
-            break;
-        }
-        usleep(1000);
-    }
-    if (timeout >= 1000)
-    {
-        RCLCPP_ERROR(this->get_logger(), "no response, timeout.");
-    }
-    else
-    {
-        res = this->service_get_position;
-    }
-    return res;
-}
-void UWBRosBridge::get_position_handle_response(rclcpp::Client<uwb_interfaces::srv::GetPosition>::SharedFuture future)
-{
-    auto response = future.get();
-
-    this->service_get_position = response->position;
-    this->service_call_completed = true;
+    int address = msg->address;
+    label_pose_map[address] = msg->position;
 }

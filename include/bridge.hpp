@@ -1,6 +1,20 @@
 #ifndef _BRIDGE_HPP_
 #define _BRIDGE_HPP_
+#include "rclcpp/rclcpp.hpp"
+#include <string>
+#include <cmath>
+#include <random>
+#include <regex>
+#include <ament_index_cpp/get_package_share_directory.hpp>
 
+#include "nav_msgs/msg/odometry.hpp"
+#include <gz/msgs/odometry.pb.h>
+#include <gz/transport/Node.hh>
+#include "uwb_interfaces/srv/uwb_measure.hpp"
+#include "uwb_interfaces/srv/get_position.hpp"
+#include "uwb_interfaces/msg/uwb_distance.hpp"
+#include "uwb_interfaces/msg/gazebo_position.hpp"
+#include "tinyxml2.hpp"
 class UWBRosBridge : public rclcpp::Node
 {
 public:
@@ -12,11 +26,10 @@ private:
     void gz_odometry_topic_callback(const gz::msgs::Odometry &_msg);
     void measure_handle_service(const std::shared_ptr<uwb_interfaces::srv::UWBMeasure::Request> request,
                                 std::shared_ptr<uwb_interfaces::srv::UWBMeasure::Response> response);
-    void get_position_handle_service(const std::shared_ptr<uwb_interfaces::srv::GetPosition::Request> request,
-                                     std::shared_ptr<uwb_interfaces::srv::GetPosition::Response> response);
-    geometry_msgs::msg::Point callServiceGetPosition(int id);
-    void get_position_handle_response(rclcpp::Client<uwb_interfaces::srv::GetPosition>::SharedFuture future);
-    void change_get_position_client_service_name(const std::string &service_name);
+    void gazebo_position_callback(uwb_interfaces::msg::GazeboPosition::SharedPtr msg);
+    int get_id(std::string label_name);
+    rclcpp::Subscription<uwb_interfaces::msg::GazeboPosition>::SharedPtr gazeboPositionSubscription_;
+    rclcpp::Publisher<uwb_interfaces::msg::GazeboPosition>::SharedPtr gazeboPositionPublisher_;
     std::unordered_map<int, geometry_msgs::msg::Point> anchorPoseMap;
     gz::transport::Node subscribeNode;
     std::string labelName;
@@ -24,9 +37,7 @@ private:
     rclcpp::Service<uwb_interfaces::srv::GetPosition>::SharedPtr get_position_service_;
     geometry_msgs::msg::Point label_pose;
     std::default_random_engine tandomGenerator;
-    bool service_call_completed;
-    geometry_msgs::msg::Point service_get_position;
-    rclcpp::Client<uwb_interfaces::srv::GetPosition>::SharedPtr get_position_client_;
-    
+
+    std::unordered_map<int, geometry_msgs::msg::Point> label_pose_map;
 };
 #endif
