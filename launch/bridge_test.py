@@ -30,4 +30,24 @@ def generate_launch_description():
         parameters=[{'label_name': "x500_3"}]
     )
     ld.add_action(node3)
+
+
+    node4 = Node(
+        package='uwb_ros_bridge_sim',
+        executable='bridge',
+        name='bridge_1',
+	    output='screen',
+        parameters=[{'label_name': "x500_4"}]
+    )
+    ld.add_action(node4)
+
+    node5 = Node(
+        package='uwb_ros_bridge_sim',
+        executable='bridge',
+        name='bridge_5',
+	    output='screen',
+        parameters=[{'label_name': "x500_5"}]
+    )
+    ld.add_action(node5)
+
     return ld
